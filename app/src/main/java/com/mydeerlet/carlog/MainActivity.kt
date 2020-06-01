@@ -3,6 +3,8 @@ package com.mydeerlet.carlog
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -11,8 +13,11 @@ import android.hardware.SensorManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.provider.Settings
 import android.util.Log
+import android.view.OrientationEventListener
 import android.view.Surface
+import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
@@ -20,32 +25,42 @@ import androidx.camera.core.impl.VideoCaptureConfig
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.mydeerlet.carlog.ui.SettingActivity
+import com.mydeerlet.carlog.utils.RxTimerUtil
 import com.mydeerlet.carlog.utils.StatusBar
+import com.mydeerlet.carlog.utils.Utils
 import kotlinx.android.synthetic.main.activity_main.*
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
 
-class MainActivity : AppCompatActivity(),SensorEventListener {
+class MainActivity : AppCompatActivity() {
+
+    val TAG = "MYlOG"
+
+    var mTimeLong = 0L
+    var mSpacing = 20L+1
 
 
     var preview: Preview? = null
     var imageCapture: ImageCapture? = null
 
-    lateinit var videoCapture: VideoCapture
+    lateinit var mVideoCapture: VideoCapture
     lateinit var mContext: Context
 
 
-    var mSensorManager:SensorManager?=null
+    var mSensorManager: SensorManager? = null
 
 
+    lateinit var myOrientoinListener: MyOrientoinListener
 
-    @SuppressLint("RestrictedApi")
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        StatusBar.fullSystemBar(this)
+        StatusBar.fitSystemBar(this)
+        StatusBar.lightStatusBar(this, false)
 
         setContentView(R.layout.activity_main)
 
@@ -61,101 +76,70 @@ class MainActivity : AppCompatActivity(),SensorEventListener {
         }
 
         // Setup the listener for take photo button
-        camera_capture_button.setOnClickListener { takePhoto(false) }
-        camera_capture_button.setOnLongClickListener {
-            takePhoto(true)
-            true
+        camera_capture_button.setOnClickListener { takePhoto(true) }
+
+//        starDetection()
+
+        iv_img.setOnClickListener { startActivity(Intent(mContext, SettingActivity::class.java)) }
+
+
+
+        myOrientoinListener = MyOrientoinListener(this)
+        val autoRotateOn = Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) == 1
+        if (autoRotateOn) {
+            myOrientoinListener.enable();
         }
-//        videoCapture!!.stopRecording()
-
-
-        starDetection()
-
 
     }
-
 
     /**
-     * 设置传感器
+     * 重力感应
      */
-    fun starDetection() {
-        mSensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
-        val mSensor = mSensorManager!!.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)// TYPE_GRAVIT
-        // 参数三，检测的精准度
-        mSensorManager!!.registerListener(this, mSensor, SensorManager.SENSOR_DELAY_NORMAL);// SENSOR_DELAY_GAME
+    inner class MyOrientoinListener(context: Context) : OrientationEventListener(context) {
+        @SuppressLint("SourceLockedOrientationActivity")
+        override fun onOrientationChanged(orientation: Int) {
+            val screenOrientation: Int = getResources().getConfiguration().orientation
+
+            if (orientation >= 0 && orientation < 45 || orientation > 315) {    //设置竖屏
+                if (screenOrientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT && orientation !== ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT) {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+                }
+            } else if (orientation > 225 && orientation < 315) { //设置横屏
+                if (screenOrientation != ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+                }
+            } else if (orientation > 45 && orientation < 135) { // 设置反向横屏
+                if (screenOrientation != ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE) {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE)
+                }
+            } else if (orientation > 135 && orientation < 225) { //反向竖屏
+                if (screenOrientation != ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT) {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT)
+                }
+            }
+        }
+
     }
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        TODO("Not yet implemented")
-    }
+
 
     @SuppressLint("RestrictedApi")
-    override fun onSensorChanged(event: SensorEvent?) {
+    private fun myTimer() {
+        RxTimerUtil.interval(1000, object : RxTimerUtil.IRxNext {
 
-        if(event!!.sensor.getType() != Sensor.TYPE_ACCELEROMETER){
-            return
-        }
-        val values = event.values
-        val ax = values[0]
-        val ay = values[1]
+            override fun doNext(number: Long) {
 
-        val g = Math.sqrt(ax * ax + ay * ay.toDouble())
-        var cos = ay / g
-        if (cos > 1) {
-            cos = 1.0
-        } else if (cos < -1) {
-            cos = -1.0
-        }
-        var rad = Math.acos(cos)
-        if (ax < 0) {
-            rad = 2 * Math.PI - rad
-        }
-
-        val uiRot: Int = this.getWindowManager().getDefaultDisplay().getRotation()
-        val uiRad = Math.PI / 2 * uiRot
-        rad -= uiRad
-
-        checkBundray(rad.toInt())
+                Log.i(TAG, "doNext:$number")
+                v_view.visibility = if (number % 2 == 0L) View.VISIBLE else View.INVISIBLE
+                mTimeLong = number % mSpacing
+                tv_time.text = Utils.longToString(mTimeLong)
+                if (mTimeLong + 1 == mSpacing) {
+                    mTimeLong = 0
+                    mVideoCapture.stopRecording()
+                    takePhoto(true)
+                }
+            }
+        })
     }
-
-
-    /**
-     * 旋转检测
-     */
-
-    private var curRotateCode = Surface.ROTATION_0
-
-    @SuppressLint("RestrictedApi")
-    private fun checkBundray(rotateCode: Int) {
-        var tmp =  rotateCode
-
-        if (tmp == 2) {
-            tmp = 1
-        }
-        if (tmp == -1) {
-            tmp = 4
-        }
-
-
-        var angle = Surface.ROTATION_0
-
-        when (tmp) {
-            0 -> angle = Surface.ROTATION_0
-            1 -> angle = Surface.ROTATION_90
-            3 -> angle = Surface.ROTATION_180
-            4 -> angle = Surface.ROTATION_270
-        }
-
-        if(angle == curRotateCode){
-
-        }else{
-            curRotateCode = angle
-            videoCapture.setTargetRotation(curRotateCode)
-        }
-    }
-
-
-
-
 
 
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
@@ -165,14 +149,10 @@ class MainActivity : AppCompatActivity(),SensorEventListener {
     @SuppressLint("RestrictedApi")
     private fun startCamera() {
 
-
-
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         // Select back camera
         val cameraSelector =
             CameraSelector.Builder().requireLensFacing(CameraSelector.LENS_FACING_BACK).build()
-
-
 
         cameraProviderFuture.addListener(Runnable {
             // Used to bind the lifecycle of cameras to the lifecycle owner
@@ -182,7 +162,7 @@ class MainActivity : AppCompatActivity(),SensorEventListener {
 
             imageCapture = ImageCapture.Builder().build()
 
-            videoCapture = VideoCaptureConfig.Builder()
+            mVideoCapture = VideoCaptureConfig.Builder()
                 .setTargetRotation(Surface.ROTATION_0)
                 .build()
 
@@ -192,7 +172,13 @@ class MainActivity : AppCompatActivity(),SensorEventListener {
                 // Unbind use cases before rebinding
                 cameraProvider.unbindAll()
                 // Bind use cases to camera
-                cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture, videoCapture)
+                cameraProvider.bindToLifecycle(
+                    this,
+                    cameraSelector,
+                    preview,
+                    imageCapture,
+                    mVideoCapture
+                )
                 preview!!.setSurfaceProvider(viewFinder.createSurfaceProvider())
 
 
@@ -208,15 +194,11 @@ class MainActivity : AppCompatActivity(),SensorEventListener {
     @SuppressLint("RestrictedApi")
     private fun takePhoto(isVideo: Boolean) {
         if (isVideo) {
+            myTimer()
             val photoFile = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                SimpleDateFormat(
-                    FILENAME_FORMAT,
-                    Locale.US
-                ).format(System.currentTimeMillis()) + ".mp4"
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis()) + ".mp4"
             )
-
-            videoCapture.startRecording(
+            mVideoCapture.startRecording(
                 photoFile,
                 ContextCompat.getMainExecutor(this),
                 object : VideoCapture.OnVideoSavedCallback {
@@ -237,7 +219,6 @@ class MainActivity : AppCompatActivity(),SensorEventListener {
                             "Photo capture failed: ${message} +${videoCaptureError} ${cause.toString()} "
                         )
                     }
-
                 })
         } else {
             val photoFile = File(
@@ -266,7 +247,6 @@ class MainActivity : AppCompatActivity(),SensorEventListener {
         }
     }
 
-
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<String>,
@@ -285,7 +265,7 @@ class MainActivity : AppCompatActivity(),SensorEventListener {
 
     companion object {
         private const val TAG = "CameraXBasic"
-        private const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
+        private const val FILENAME_FORMAT = "yyyy-MM-dd HH:mm:ss-SSS"
         private const val REQUEST_CODE_PERMISSIONS = 10
         private val REQUIRED_PERMISSIONS = arrayOf(
             Manifest.permission.CAMERA,
@@ -296,8 +276,28 @@ class MainActivity : AppCompatActivity(),SensorEventListener {
     }
 
 
+    @SuppressLint("RestrictedApi")
+    override fun onBackPressed() {
+        mTimeLong = 0
+        tv_time.text = Utils.longToString(mTimeLong)
+        mVideoCapture.stopRecording()
+        RxTimerUtil.cancel()
+        super.onBackPressed()
+    }
+
+    @SuppressLint("RestrictedApi")
+    override fun onPause() {
+        mTimeLong = 0
+        tv_time.text = Utils.longToString(mTimeLong)
+        mVideoCapture.stopRecording()
+        RxTimerUtil.cancel()
+        super.onPause()
+    }
+
+    @SuppressLint("RestrictedApi")
     override fun onDestroy() {
+        mVideoCapture.stopRecording()
+        RxTimerUtil.cancel()
         super.onDestroy()
-        mSensorManager!!.unregisterListener(this);
     }
 }
